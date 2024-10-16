@@ -1,8 +1,9 @@
-﻿using System;
+using System;
 using System.Windows.Forms;
 using System.Runtime.InteropServices;
 using System.IO;
 using System.Xml.Serialization;
+using System.Text;
 
 static class Program
 {
@@ -56,10 +57,14 @@ static class Program
     private static bool IsMinecraftActive()
     {
         IntPtr foregroundWindow = GetForegroundWindow();
-        int processId;
-        GetWindowThreadProcessId(foregroundWindow, out processId);
-        System.Diagnostics.Process process = System.Diagnostics.Process.GetProcessById(processId);
-        return process.ProcessName.ToLower().Contains("minecraft");
+        StringBuilder windowTitle = new StringBuilder(256);
+        GetWindowText(foregroundWindow, windowTitle, 256);
+        string title = windowTitle.ToString();
+
+        // Check for specific Minecraft window titles
+        return title.Equals("Minecraft", StringComparison.OrdinalIgnoreCase) ||
+               title.StartsWith("Minecraft*", StringComparison.OrdinalIgnoreCase) ||
+               title.EndsWith("Minecraft", StringComparison.OrdinalIgnoreCase);
     }
 
     public static void ResetToDefault()
@@ -123,8 +128,8 @@ static class Program
     [DllImport("user32.dll")]
     private static extern IntPtr GetForegroundWindow();
 
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out int lpdwProcessId);
+    [DllImport("user32.dll")]
+    private static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
 
     private const int MOUSEEVENTF_LEFTDOWN = 0x02;
     private const int MOUSEEVENTF_LEFTUP = 0x04;
