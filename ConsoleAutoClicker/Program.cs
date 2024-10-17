@@ -4,6 +4,8 @@ using System.Runtime.InteropServices;
 using System.IO;
 using System.Xml.Serialization;
 using System.Text;
+using System.Diagnostics;
+using System.Threading;
 
 static class Program
 {
@@ -16,33 +18,74 @@ static class Program
     public const int VK_TAB = 0x09;
 
     private static MainForm mainForm;
-    private static Timer clickTimer;
+    private static Thread clickThread;
     private static Random random = new Random();
+    private static Stopwatch stopwatch = new Stopwatch();
+    private static long lastClickTicks = 0;
 
     [STAThread]
     static void Main()
     {
-        Application.EnableVisualStyles();
-        Application.SetCompatibleTextRenderingDefault(false);
-        LoadConfig();
-        InitializeClickTimer();
-        mainForm = new MainForm();
-        Application.Run(mainForm);
-    }
-
-    private static void InitializeClickTimer()
-    {
-        clickTimer = new Timer();
-        clickTimer.Tick += ClickTimer_Tick;
-        UpdateClickInterval();
-        clickTimer.Start();
-    }
-
-    private static void ClickTimer_Tick(object sender, EventArgs e)
-    {
-        if (!exitRequested && (!minecraftOnly || IsMinecraftActive()))
+        try
         {
-            PerformClick();
+            
+            Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.High;
+
+            // to set timer resolution, but don't fail if it's not available
+            try
+            {
+                TimeBeginPeriod(1);
+            }
+            catch (EntryPointNotFoundException)
+            {
+                // timer functions not available ffs
+            }
+
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+            LoadConfig();
+            InitializeClickThread();
+            mainForm = new MainForm();
+            Application.Run(mainForm);
+        }
+        catch (Exception ex)
+        {
+            // Log the exception to a file
+            File.WriteAllText("error_log.txt", ex.ToString());
+            MessageBox.Show($"An error occurred: {ex.Message}\nCheck error_log.txt for details.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            // Try to reset timer resolution, but don't fail if it's not available
+            try
+            {
+                TimeEndPeriod(1);
+            }
+            catch (EntryPointNotFoundException)
+            {
+                // timer functions not available, continue without them
+            }
+        }
+    }
+
+    private static void InitializeClickThread()
+    {
+        clickThread = new Thread(ClickLoop);
+        clickThread.IsBackground = true;
+        clickThread.Priority = ThreadPriority.Highest;
+        clickThread.Start();
+    }
+
+    private static void ClickLoop()
+    {
+        stopwatch.Start();
+        while (!exitRequested)
+        {
+            if (!minecraftOnly || IsMinecraftActive())
+            {
+                PerformClick();
+            }
+            Thread.Yield();
         }
     }
 
@@ -50,7 +93,15 @@ static class Program
     {
         if (GetAsyncKeyState(activeKey) < 0)
         {
-            mouse_event(MOUSEEVENTF_LEFTDOWN | MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+            long currentTicks = stopwatch.ElapsedTicks;
+            double elapsedSeconds = (currentTicks - lastClickTicks) / (double)Stopwatch.Frequency;
+            double currentCPS = 1.0 / elapsedSeconds;
+
+            if (currentCPS <= targetCPS)
+            {
+                mouse_event(MOUSEEVENTF_LEFTDOWN | MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+                lastClickTicks = currentTicks;
+            }
         }
     }
 
@@ -70,9 +121,8 @@ static class Program
     public static void ResetToDefault()
     {
         activeKey = VK_F;
-        targetCPS = 16.66;
+        targetCPS = 16.00;
         minecraftOnly = true;
-        UpdateClickInterval();
         SaveConfig();
     }
 
@@ -84,8 +134,7 @@ static class Program
 
     public static void UpdateClickInterval()
     {
-        double interval = 1000.0 / targetCPS;
-        clickTimer.Interval = (int)interval;
+        SaveConfig();
     }
 
     public static void SaveConfig()
@@ -130,6 +179,12 @@ static class Program
 
     [DllImport("user32.dll")]
     private static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
+
+    [DllImport("winmm.dll", EntryPoint = "timeBeginPeriod", SetLastError = true)]
+    public static extern uint TimeBeginPeriod(uint uPeriod);
+
+    [DllImport("winmm.dll", EntryPoint = "timeEndPeriod", SetLastError = true)]
+    public static extern uint TimeEndPeriod(uint uPeriod);
 
     private const int MOUSEEVENTF_LEFTDOWN = 0x02;
     private const int MOUSEEVENTF_LEFTUP = 0x04;
